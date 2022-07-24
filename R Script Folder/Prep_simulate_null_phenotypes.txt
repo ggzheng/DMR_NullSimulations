@@ -1,0 +1,259 @@
+
+################################################################
+################################################################
+##### Prepare GSE56046 Data
+################################################################
+################################################################
+
+################################################################
+################################################################
+##### data is publicly available at  
+##### https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE56046
+################################################################
+################################################################
+
+##### we saved the name of covariate data as:
+##### cov_GSE56046.txt 
+
+################################################################
+##### Set the number of replicates
+################################################################
+nimput <- 1000
+
+################################################################
+##### Cov
+################################################################
+cov <- read.csv("cov_GSE56046.txt", sep = "\t", header = F)
+names(cov) <- c("ID", "ChipID", "WellID", "age", "site", "Bcell", "Tcell", "NK", "Neutro")
+
+head(cov)
+table(cov$WellID)
+table(cov$ChipID) #12 full samples per 450Kchip
+
+### checking missing data
+summary(cov)
+dim(cov) 
+
+pheno <- cov
+pheno_org <- cov
+names(pheno_org)
+
+################################################################
+##### Get the list of balanced batches with full 12
+################################################################
+
+pheno_batch <- pheno_org[,c("ID","ChipID","WellID")]
+
+library(dplyr)
+
+test<-pheno_batch %>%
+    group_by(ChipID) %>%
+    summarise(count=n())
+
+test<-as.data.frame(test)
+test[order(test$count),]
+
+batchlist<-test[test$count==12,]$ChipID
+length(batchlist) 
+batchlist
+
+
+################################################################
+################################################################
+##### Select batches balanced subjects 
+##### Select 8 batches with full 12: 96 subjects
+################################################################
+################################################################
+
+################################################################
+##### Select 8 full batches  
+################################################################
+nbatch <- 8
+
+set.seed(169472)
+
+length(batchlist)
+batchlist2 <- sample(batchlist, size=nbatch, replace=F)
+
+length(batchlist2) #8
+batchlist2
+
+pheno<-pheno_org[pheno_org$ChipID%in%batchlist2,]
+nrow(pheno) #96
+
+################################################################
+##### Simulate Phenotypes 
+################################################################
+
+####Simulate Continuous Phenotype - Standard normal
+################################################################
+dataoutfile<-c()
+dataoutfile$ID<-pheno$ID
+dataoutfile<-as.data.frame(dataoutfile)
+
+for (i in 1: nimput) {
+vari<-rnorm(nrow(pheno))
+dataoutfile<-cbind(dataoutfile, vari)
+}
+
+names(dataoutfile) <- c("id",paste0("phenocont", 1: nimput))
+
+head(dataoutfile)
+dim(dataoutfile)
+
+phenotype_cont <- dataoutfile
+dim(phenotype_cont)
+
+####Simulate Continuous Phenotype - skewed - chisq 1
+################################################################
+dataoutfile<-c()
+dataoutfile$ID<-pheno$ID
+dataoutfile<-as.data.frame(dataoutfile)
+
+for (i in 1: nimput) {
+vari<-rchisq(nrow(pheno),df=1)
+dataoutfile<-cbind(dataoutfile, vari)
+}
+
+names(dataoutfile) <- c("id",paste0("phenocontsk", 1: nimput))
+
+head(dataoutfile)
+dim(dataoutfile)
+
+phenotype_contsk <- dataoutfile
+
+
+####Simulate Binary Phenotype
+####For each batch, select half for case and half for control
+################################################################
+nrow(pheno)  
+n0<-floor(nrow(pheno)/2)
+n1<-nrow(pheno)-n0
+n0
+n1
+
+dataoutfile<-c()
+dataoutfile$ID<-pheno$ID
+dataoutfile$ChipID <-pheno$ChipID
+dataoutfile<-as.data.frame(dataoutfile)
+
+batchlist_used <- unique(pheno$ChipID)
+batchlist_used <- batchlist_used[order(batchlist_used)]
+
+table((batchlist_used%in%batchlist2)) #should be ALL TRUE
+
+datout <- c()
+
+for (i in 1: length(batchlist_used)) {
+
+batchi<-batchlist_used[i]
+
+dati <- dataoutfile[dataoutfile$ChipID==batchi,]
+dati <- dati[order(dati$ID),]
+dati$ID <- as.character(dati$ID)
+
+#randomize order of rows
+dati <- dati[sample(nrow(dati),replace=FALSE),]
+
+#impute 0/1 phenotypes
+phenoi<-c()
+for (j in 1: nimput) {
+varj<-sample(c(rep(0,6),rep(1,6)), replace=FALSE)
+phenoi <-cbind(phenoi, varj)
+}
+
+dati_all <- cbind(dati$ID, phenoi)
+
+datout <- rbind(datout, dati_all)
+}
+
+dim(datout)  
+
+datout2 <- as.data.frame(datout,stringsAsFactors=FALSE)
+names(datout2) <- c("id",paste0("phenobinary", 1: nimput))
+
+head(datout2)
+dim(datout2)
+
+phenotype_binary <- datout2
+dim(phenotype_binary)
+
+
+####Simulate Binary Phenotype
+####For each batch, Uneven #cases and #controls: 25% cases 75% controls
+####EPIC: 8 per batch – 2 cases, 6 controls
+####450K: 12 per batch – 3 cases, 9 controls
+################################################################
+nrow(pheno)  
+n0<-nrow(pheno)*0.75
+n1<-nrow(pheno)-n0
+n0
+n1
+
+dataoutfile<-c()
+dataoutfile$ID<-pheno$ID
+dataoutfile$ChipID <-pheno$ChipID
+dataoutfile<-as.data.frame(dataoutfile)
+
+batchlist_used <- unique(pheno$ChipID)
+batchlist_used <- batchlist_used[order(batchlist_used)]
+
+table((batchlist_used%in%batchlist2)) #should be ALL TRUE
+
+datout <- c()
+
+for (i in 1: length(batchlist_used)) {
+
+batchi<-batchlist_used[i]
+
+dati <- dataoutfile[dataoutfile$ChipID==batchi,]
+dati <- dati[order(dati$ID),]
+dati$ID <- as.character(dati$ID)
+
+#randomize order of rows
+dati <- dati[sample(nrow(dati),replace=FALSE),]
+
+#impute 0/1 phenotypes
+phenoi<-c()
+for (j in 1: nimput) {
+varj<-sample(c(rep(0,6),rep(1,6)), replace=FALSE)
+phenoi <-cbind(phenoi, varj)
+}
+
+dati_all <- cbind(dati$ID, phenoi)
+
+datout <- rbind(datout, dati_all)
+}
+
+dim(datout)  
+
+datout2 <- as.data.frame(datout,stringsAsFactors=FALSE)
+names(datout2) <- c("id",paste0("phenobinarysk", 1: nimput))
+
+head(datout2)
+dim(datout2)
+
+phenotype_binarysk <- datout2
+dim(phenotype_binarysk)
+
+
+#### combine all simulated phenotypes
+################################################################
+length(unique(phenotype_cont$id))
+
+phenotype_all <- c()
+phenotype_all <- merge(phenotype_cont, phenotype_contsk, by="id")
+phenotype_all <- merge(phenotype_all, phenotype_binary, by="id")
+phenotype_all <- merge(phenotype_all, phenotype_binarysk, by="id")
+dim(phenotype_all) ##96 4001
+
+####Output simulation results
+##########################################################################
+
+outputfile=paste0("DMR_SimulatedData_450K_",nbatch,"batch_", nimput,".Rdata")
+outputfile
+
+save(phenotype_all, file=outputfile)
+ 
+ 
+ 
