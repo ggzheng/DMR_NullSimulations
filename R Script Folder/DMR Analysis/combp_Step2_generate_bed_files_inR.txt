@@ -1,0 +1,121 @@
+################################################################
+################################################################
+##### About GSE56046 450K Data  
+################################################################
+################################################################
+
+################################################################
+##### In this script, we generate bed files from limma EWAS output
+##### The bed files generated will be used for comb-p in python
+################################################################
+
+################################################################
+##### data is publicly available at  
+##### https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE56046
+################################################################
+
+##### we saved the covariate data as:
+##### cov_GSE56046.txt 
+
+##### we saved the methylation data (M-values) as:
+##### GSE56046_methy_normalized.txt
+
+##### assume you have simulated null phenotypes and saved it as
+##### paste0("DMR_SimulatedData_450K_",nbatch,"batch_", nimput,".Rdata")
+
+##### annotation files are available at 
+##### https://support.illumina.com/array/array_kits/infinium-methylationepic-beadchip-kit/downloads.html
+##### we also provided annotation files for 450K and EPIC arrays for downloading directly:
+##### EPIC: MethylationEPIC_v_1_0_B4.csv
+##### 450K: HumanMethylation450_15017482_v1_2.csv
+
+
+################################################################
+################################################################
+##### Generate Bed Files
+################################################################
+################################################################
+
+################################################################
+##### CpG positions from annotation files
+##### EPIC: MethylationEPIC_v_1_0_B4.csv
+##### 450K: HumanMethylation450_15017482_v1_2.csv
+################################################################
+
+pos_org <- read.csv("/restricted/projectnb/ptsd/yzheng/DMR/anno/HumanMethylation450_15017482_v1_2.csv",skip=7,stringsAsFactors=FALSE)
+
+head(pos_org)
+
+pos <- pos_org[,c("IlmnID","CHR","MAPINFO")]
+names(pos) <- c("ID","CHR","MAPINFO")
+
+
+################################################################
+##### Set # of imputations  
+##### batch = 8 (96 subjects)
+################################################################
+
+nimput <- 1000; nbatch <- 8; 
+
+phenotype_pick_list <- c("phenocont", "phenocontsk", "phenobinary", "phenobinarysk")
+#phenotype_pick_id <- 1, 2, 3,4
+#in this example, we set it to be phenocont
+
+phenotype_pick_id <- 1
+phenotype_pick <- phenotype_pick_list[phenotype_pick_id]
+phenotype_pick
+
+
+################################################################
+##### get the limma EWAS output and generate bed files
+################################################################
+
+inputfile=paste0("combp_limma_bedfiles_",phenotype_pick,"_b",nbatch,"n",nimput,".Rdata")
+inputfile
+
+load(inputfile) #gives: all_results
+length(all_results) 
+
+#note, this Sys.time() function might vary between clusters
+#time_start <- Sys.time() 
+#paste0("Time start: ", Sys.time())
+
+for(i in 1: nimput){
+#i <- 40
+
+tmp <- all_results[[i]]
+names(tmp) <- c("pval","ID")
+
+## get cg positions
+tmp2 <- merge(tmp,pos,by="ID",all.x=TRUE,all.y=FALSE)
+table(tmp2$CHR)
+
+## Some are mapped to chromosome "". I'll get rid of those. 
+tmp3 <- tmp2[!tmp2$CHR=="",]
+tmp3 <- tmp3[order(tmp3$CHR, tmp3$MAPINFO),]
+
+##Header should look like: chrom	start	end pvalue	
+bedout<-data.frame(chrom=paste("chr", tmp3$CHR,sep=""),start= tmp3$MAPINFO,end= tmp3$MAPINFO+1,pvalue= tmp3$pval)
+
+#Remove "NA" in the p values - which took too long for Python to run.
+#tail(bedout)
+bedout2 <- na.omit(bedout)
+#tail(bedout2)
+
+outputputfilei=paste0("combp_EWAS_bedfiles_",phenotype_pick,"_b",nbatch,"n",nimput,"_",i,".bed")
+
+#note: has to be tab delimited
+write.table(bedout2, outputputfilei, row.names=FALSE, col.names=TRUE, quote=FALSE, sep = '\t')
+
+print(paste0("current loop finished: i = ", i))
+}
+
+#time_end <- Sys.time()
+#paste0("Time end: ", Sys.time())
+
+#Check running time;
+#time_end-time_start
+
+
+
+

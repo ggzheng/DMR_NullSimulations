@@ -1,0 +1,214 @@
+
+################################################################
+################################################################
+##### Prepare for Cluster Submission
+################################################################
+################################################################
+
+################################################################
+##### Set Job ID for job array
+################################################################
+
+##### Each jobid is associated with one of two region types analyzed in coMethDMR: "Gene","InterGene
+##### possible jobid values: 1 and 2
+
+##### NOTE, this might be varying between different clusters
+##### Update code below compatible your cluster for batch submission in job array
+
+jobid <-  as.numeric(Sys.getenv("SGE_TASK_ID"))
+cat("Starting run job id = ", jobid ,"\n")
+
+################################################################
+################################################################
+##### Prep GSE56046 450K Data
+################################################################
+################################################################
+
+################################################################
+##### data is publicly available at  
+##### https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE56046
+################################################################
+
+##### we saved the covariate data as:
+##### cov_GSE56046.txt 
+
+##### we saved the methylation data (M-values) as:
+##### GSE56046_methy_normalized.txt
+
+##### assume you have simulated null phenotypes and saved it as
+##### paste0("DMR_SimulatedData_450K_",nbatch,"batch_", nimput,".Rdata")
+
+##### annotation files are available at 
+##### https://support.illumina.com/array/array_kits/infinium-methylationepic-beadchip-kit/downloads.html
+##### we also provided annotation files for 450K and EPIC arrays for downloading directly:
+##### EPIC: MethylationEPIC_v_1_0_B4.csv
+##### 450K: HumanMethylation450_15017482_v1_2.csv
+
+################################################################
+##### Set # of imputations  
+##### batch = 8 (96 subjects)
+################################################################
+
+nimput <- 1000; nbatch <- 8; 
+
+################################################################
+##### library  
+################################################################
+library(limma)
+library(qqman)
+library(lme4)
+
+#The latest version of coMethDMR can be installed by
+#library(devtools)
+#install_github ("lissettegomez/coMethDMR")
+
+library(coMethDMR)
+library(data.table)
+
+################################################################
+##### picked id + simulated phenotypes
+################################################################
+
+inputfile=paste0("DMR_SimulatedData_450K_",nbatch,"batch_", nimput,".Rdata")
+load(inputfile) #gives: phenotype_all
+
+#names(phenotype_all)
+#dim(phenotype_all) 
+
+phenotype_all$id <- as.character(phenotype_all$id)
+
+################################################################
+##### covariates
+##### note you might need to modify your code depending how you prepare GSE56046 data
+################################################################
+
+cov <- read.csv("cov_GSE56046.txt", sep = "\t", header = F, stringsAsFactor=FALSE)
+
+names(cov) <- c("ID", "ChipID", "WellID", "age", "site", "Bcell", "Tcell", "NK", "Neutro")
+dim(cov)
+
+cov2 <- cov[cov$ID%in%phenotype_all$id,]
+dim(co2v) 
+
+summary(cov2)
+
+################################################################
+##### beta data
+##### NOTE: those are already M values!
+##### 450K annotation: HumanMethylation450_15017482_v1_2.csv  
+##### EPIC annotation: MethylationEPIC_v_1_0_B4.csv
+##### note you might need to modify your code depending how you prepare GSE56046 data
+################################################################
+
+beta <- fread("GSE56046_methy_normalized.txt")
+dim(beta)  
+
+beta_Mvalues <- grep(pattern = 'Mvalue', x = names(beta), value=TRUE)
+beta2 <- beta[, beta_Mvalues, with=FALSE]
+dim(beta2)  
+names(beta2) <- cov$ID
+beta2 <- as.data.frame(beta2)
+
+beta3 <- beta2[, phenotype_all$id]
+dim(beta3)  
+row.names(beta3) <- beta$ID_REF
+
+#sum(is.na(beta3)) 
+
+##### remove X/Y probes - you can keep them as you prefer
+##### if applying to EPIC data, switch to EPIC annotation: MethylationEPIC_v_1_0_B4.csv
+################################################################
+anno <- read.csv("HumanMethylation450_15017482_v1_2.csv",skip=7,stringsAsFactors=FALSE)
+
+cg_exclude <- anno[anno$CHR%in%c("X","Y"),]$Name
+
+beta4 <- beta3[!rownames(beta3)%in%cg_exclude,]
+dim(beta4)  
+
+################################################################
+##### scale all continuous variables
+################################################################
+
+betaP<-beta4
+
+pheno<-cov2
+rownames(pheno) <- pheno$ID
+pheno$site <- as.factor(pheno$site)
+pheno$sampID <- pheno$ID
+
+all(rownames(pheno)==colnames(betaP)) ##Should be all TRUE
+
+dim(betaP) 
+dim(pheno)  
+
+#covariates
+scale_var <- c("age","Bcell","Tcell","NK","Neutro")
+pheno[, scale_var] <-scale(pheno[, scale_var])
+
+is.data.frame(betaP) #TRUE
+is.data.frame(pheno) #TRUE
+
+
+################################################################
+################################################################
+##### Apply CoMethDMR
+################################################################
+################################################################
+
+################################################################
+##### Pick the subregion
+#####          450k_Gene_3_200.RDS 
+#####          450k_InterGene_3_200.RDS
+##### if EPIC, change to use:
+#####          EPIC_Gene_3_200.RDS 
+#####          EPIC_InterGene_3_200.RDS 
+################################################################
+
+#note, this Sys.time() function might vary between clusters
+#time_start <- Sys.time() 
+#paste0("Time start: ", Sys.time())
+
+k<-jobid
+
+regions_list <- c("Gene","InterGene")
+vark=regions_list[k]
+
+print(paste0("current k = ", k, " for ", vark))
+
+closeBy_ls <- readRDS(
+  system.file(
+    "extdata",
+    paste0("450k_", vark, "_3_200.rds"),   #change "450k_" to "EPIC_" for EPIC array data
+    package = 'coMethDMR',
+    mustWork = TRUE
+) )
+
+length(closeBy_ls)
+
+#note: CoMethAllRegions uses M values
+
+coMeth_ls <- CoMethAllRegions (
+ dnam = betaP,
+ betaToM = FALSE,        # our methylation values are M-values already!
+ CpGs_ls = closeBy_ls,
+ arrayType = "450k",     #change "450k" to "EPIC" for EPIC array data
+ returnAllCpGs = FALSE,
+ output = "CpGs"
+)
+
+#time_end <- Sys.time()
+#paste0("Time end: ", Sys.time())
+
+#Check running time;
+#time_end-time_start
+
+
+outfilename=paste0("coMethDMR_prepdata_",vark,".RData") 
+
+print(paste0("saved as: ", outfilename))
+
+save(coMeth_ls, file= outfilename)
+
+
+
+

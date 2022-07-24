@@ -1,0 +1,268 @@
+
+################################################################
+################################################################
+##### Prepare for Cluster Submission
+################################################################
+################################################################
+
+################################################################
+##### Set Job ID for job array
+################################################################
+
+##### Bumphunter using smoothed estimates is computationally expensive for genome-wide data
+##### We suggest running each replicate at a time and saving the output just in case to avoid unnecessary cost
+##### You can run selected replicates as needed
+
+##### Each jobid is associated one replicate your simulated null phenotypes
+##### values of jobid: from 1 up to nimput (you pick)
+
+##### NOTE, this might be varying between different clusters
+##### Update code below compatible your cluster for batch submission in job array
+
+jobid <-  as.numeric(Sys.getenv("SGE_TASK_ID"))
+cat("Starting run job id = ", jobid ,"\n")
+
+
+################################################################
+################################################################
+##### Prep GSE56046 450K Data for Bumpuhunter
+################################################################
+################################################################
+
+################################################################
+##### data is publicly available at  
+##### https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE56046
+################################################################
+
+##### we saved the covariate data as:
+##### cov_GSE56046.txt 
+
+##### we saved the methylation data (M-values) as:
+##### GSE56046_methy_normalized.txt
+
+##### assume you have simulated null phenotypes and saved it as
+##### paste0("DMR_SimulatedData_450K_",nbatch,"batch_", nimput,".Rdata")
+
+##### annotation files are available at 
+##### https://support.illumina.com/array/array_kits/infinium-methylationepic-beadchip-kit/downloads.html
+##### we also provided annotation files for 450K and EPIC arrays for downloading directly:
+##### EPIC: MethylationEPIC_v_1_0_B4.csv
+##### 450K: HumanMethylation450_15017482_v1_2.csv
+
+################################################################
+##### Set # of imputations  
+##### batch = 8 (96 subjects)
+################################################################
+
+nimput <- 1000; nbatch <- 8; 
+
+phenotype_pick_list <- c("phenocont", "phenocontsk", "phenobinary", "phenobinarysk")
+#phenotype_pick_id <- 1, 2, 3,4
+#in this example, we set it to be phenocont
+
+phenotype_pick_id <- 1
+phenotype_pick <- phenotype_pick_list[phenotype_pick_id]
+phenotype_pick
+
+#automatically insert: i <- 1: nimput (up to nimput)
+i <- jobid
+
+#use the seed you prefer 
+seedid <- 287353 + nimput*12 + nbatch*31 + phenotype_pick_id*3762 + i
+seedid
+set.seed(seedid)
+
+
+################################################################
+################################################################
+##### Prepare Data - 450K
+################################################################
+################################################################
+
+library("data.table")
+
+################################################################
+##### picked id + simulated phenotypes
+################################################################
+
+inputfile=paste0("DMR_SimulatedData_450K_",nbatch,"batch_",nimput,".Rdata")
+load(inputfile) #gives: phenotype_all
+
+#names(phenotype_all)
+#dim(phenotype_all) 
+
+phenotype_all$id <- as.character(phenotype_all$id)
+
+##### load simulated phenotypes
+keeptemp <- c("id", paste0(phenotype_pick,i))
+keeptemp
+
+simulated_phenotype <- phenotype_all[, keeptemp]
+names(simulated_phenotype)<-c("sampID","phenotype")
+
+################################################################
+##### covariates
+##### note you might need to modify your code depending how you prepare GSE56046 data
+################################################################
+
+cov <- read.csv("cov_GSE56046.txt", sep = "\t", header = F, stringsAsFactor=FALSE)
+names(cov) <- c("ID", "ChipID", "WellID", "age", "site", "Bcell", "Tcell", "NK", "Neutro")
+#dim(cov) 
+
+cov2 <- cov[cov$ID%in%phenotype_all$id,]
+#dim(co2v) 
+
+cov2$sampID <- cov2$ID
+cov3 <- merge(cov2, simulated_phenotype, by="sampID")
+
+#check missingness
+summary(cov3)
+
+################################################################
+##### beta data
+##### NOTE: those are already M values!
+##### 450K annotation: HumanMethylation450_15017482_v1_2.csv  
+##### EPIC annotation: MethylationEPIC_v_1_0_B4.csv
+##### note you might need to modify your code depending how you prepare GSE56046 data
+################################################################
+
+beta <- fread("GSE56046_methy_normalized.txt")
+dim(beta)  
+
+beta_Mvalues <- grep(pattern = 'Mvalue', x = names(beta), value=TRUE)
+beta2 <- beta[, beta_Mvalues, with=FALSE]
+dim(beta2) 
+names(beta2) <- cov$ID
+beta2 <- as.data.frame(beta2)
+
+beta3 <- beta2[, phenotype_all$id]
+dim(beta3)  
+row.names(beta3) <- beta$ID_REF
+
+#sum(is.na(beta3))  
+
+##### remove X/Y probes - you can keep them as you prefer
+##### if applying to EPIC data, switch to EPIC annotation: MethylationEPIC_v_1_0_B4.csv
+################################################################
+anno <- read.csv("HumanMethylation450_15017482_v1_2.csv",skip=7, stringsAsFactors=FALSE)
+cg_exclude <- anno[anno$CHR%in%c("X","Y"),]$Name
+
+beta4 <- beta3[!rownames(beta3)%in%cg_exclude,]
+dim(beta4) 
+
+################################################################
+##### scale all continuous variables
+################################################################
+
+betaP<-beta4
+
+pheno<-cov3
+rownames(pheno) <- pheno$ID
+pheno$site <- as.factor(pheno$site)
+
+
+### DO NOT FORGET THIS!!
+pheno<-pheno[order(row.names(pheno)),]
+betaP <- betaP[,order(colnames(betaP))]
+
+all(rownames(pheno)==colnames(betaP)) ##Should be all TRUE
+
+dim(betaP) 
+dim(pheno) 
+
+#covariates
+scale_var <- c("age","Bcell","Tcell","NK","Neutro")
+pheno[, scale_var] <-scale(pheno[, scale_var])
+
+is.data.frame(betaP) #TRUE
+is.data.frame(pheno) #TRUE
+
+betaP_org <- betaP
+pheno_org <- pheno
+
+
+################################################################
+################################################################
+##### Apply Bumphunter
+################################################################
+################################################################
+
+################################################################
+##### library  
+################################################################
+library(minfi)
+library(BiocParallel)
+
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+#if you use EPIC array change this to be 
+#library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+
+################################################################
+##### Prep for Bumphunter
+################################################################
+
+##### Create a GRset using M values
+################################################################
+betaP<-as.matrix(betaP) #has to be a matrix!
+GRset <- makeGenomicRatioSetFromMatrix(betaP, pData = pheno,
+                                       array = "IlluminaHumanMethylation450k",
+                                       annotation = "ilmn12.hg19",
+                                       mergeManifest = FALSE, what = c("M"))
+#GRset
+
+#if you use EPIC array change this to be
+# array = "IlluminaHumanMethylationEPIC"
+# annotation = "ilm10b4.hg19"
+
+##### Create design matrix
+################################################################
+
+modstring<-paste0("~phenotype+age+site+Bcell+Tcell+NK+Neutro")
+design<-model.matrix(as.formula(paste(modstring)), data=pheno)
+
+print(all(rownames(design)==colnames(betaP))) # Should be TRUE
+
+##Apply Bumphunter  
+##########################################################################
+
+## Register parallel
+## Job runs for a long time, authors advice to run on parallel, you are free to use code below 
+
+#library(doParallel)
+#detectCores() # number of cores
+#cores_avail <- max(floor(detectCores()/16),1)
+#cores_avail
+#registerDoParallel(cores = cores_avail) 
+#need space for swap memory, so use only a portion of the available memory (1/8 or 1/16)
+
+## However this will be demanding on peak memory, so we only used 1 core in our simulations
+## Run bumphunter
+
+#note, this Sys.time() function might vary between clusters
+#time_start <- Sys.time() 
+#paste0("Time start: ", Sys.time())
+
+#maxGap = 500, pickCutoffQ = 0.99, smooth = FALSE are default values 
+
+bumps <- bumphunter(GRset, design=design, coef=2, maxGap = 500, 
+                    pickCutoff=TRUE, pickCutoffQ = 0.99,
+                    nullMethod="bootstrap", B = 1000,
+                    verbose = T, type= "M", smooth = T, smoothFunction = loessByCluster)
+
+warnings()
+
+#time_end <- Sys.time()
+#paste0("Time end: ", Sys.time())
+
+#Check running time;
+#time_end-time_start
+
+##Save output
+##########################################################################
+ 
+outputfile=paste0("Bumphunter_",phenotype_pick,"_",i,".Rdata")
+outputfile
+save(bumps, file=outputfile)
+
+
+

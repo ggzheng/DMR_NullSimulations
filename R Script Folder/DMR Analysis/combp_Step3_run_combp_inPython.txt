@@ -1,0 +1,15 @@
+
+# Note, this might need to be adapted to your cluster prior to batch submission!
+# Assume you have loaded all needed packaged in python
+# Assume you run 1000 replicates in simulations
+
+# Below is the example code for the standard normal phenotype with 8 full chips (96 subjects)
+# In the code to simulate null phenotypes, we have: "phenocont", "phenocontsk", "phenobinary", "phenobinarysk"
+
+for i in $(seq 1 1000) 
+do
+ 
+comb-p pipeline -c 4 --seed 1e-3 --dist 200 -p /location_where_you_output_DMRresults/combp_EWAS_phenocont_b8n1000_${i} --region-filter-p 0.1 /location_where_you_saved_bedfiles/combp_limma_bedfiles_phenocont_b8n1000_${i}.bed
+
+done 
+

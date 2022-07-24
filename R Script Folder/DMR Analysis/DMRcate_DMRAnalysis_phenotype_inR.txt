@@ -1,0 +1,293 @@
+################################################################
+################################################################
+##### About GSE56046 450K Data  
+################################################################
+################################################################
+
+################################################################
+##### data is publicly available at  
+##### https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE56046
+################################################################
+
+##### we saved the covariate data as:
+##### cov_GSE56046.txt 
+
+##### we saved the methylation data (M-values) as:
+##### GSE56046_methy_normalized.txt
+
+##### assume you have simulated null phenotypes and saved it as
+##### paste0("DMR_SimulatedData_450K_",nbatch,"batch_", nimput,".Rdata")
+
+##### annotation files are available at 
+##### https://support.illumina.com/array/array_kits/infinium-methylationepic-beadchip-kit/downloads.html
+##### we also provided annotation files for 450K and EPIC arrays for downloading directly:
+##### EPIC: MethylationEPIC_v_1_0_B4.csv
+##### 450K: HumanMethylation450_15017482_v1_2.csv
+
+
+################################################################
+################################################################
+##### Prep for Simulations
+################################################################
+################################################################
+
+################################################################
+##### Set # of imputations  
+##### batch = 8 (96 subjects)
+################################################################
+
+nimput <- 1000; nbatch <- 8; 
+
+phenotype_pick_list <- c("phenocont", "phenocontsk", "phenobinary", "phenobinarysk")
+#phenotype_pick_id <- 1, 2, 3,4
+#in this example, we set it to be phenocont
+
+phenotype_pick_id <- 1
+phenotype_pick <- phenotype_pick_list[phenotype_pick_id]
+phenotype_pick
+
+#you can set the seed as needed like below 
+seedid <- 2834 + nimput*10 + nbatch*1000 + phenotype_pick_id
+seedid
+set.seed(seedid)
+
+################################################################
+##### library  
+################################################################
+
+library("data.table")
+
+################################################################
+##### picked id + simulated phenotypes
+################################################################
+
+inputfile=paste0("DMR_SimulatedData_450K_",nbatch,"batch_", nimput,".Rdata")
+load(inputfile) #gives: phenotype_all
+
+#names(phenotype_all)
+#dim(phenotype_all) 
+
+phenotype_all$id <- as.character(phenotype_all$id)
+
+simulated_phenotype <- phenotype_all
+
+################################################################
+##### covariates
+##### note you might need to modify your code depending how you prepare GSE56046 data
+################################################################
+
+cov <- read.csv("/restricted/projectnb/ptsd/yzheng/DMR/450Kdata/cov_GSE56046.txt", sep = "\t", header = F, stringsAsFactor=FALSE)
+
+names(cov) <- c("ID", "ChipID", "WellID", "age", "site", "Bcell", "Tcell", "NK", "Neutro")
+#dim(cov) 
+
+cov2 <- cov[cov$ID%in%phenotype_all$id,]
+#dim(co2v) 
+
+#check missingness
+summary(cov2)
+
+################################################################
+##### beta data
+##### NOTE: those are already M values!
+##### 450K annotation: HumanMethylation450_15017482_v1_2.csv  
+##### EPIC annotation: MethylationEPIC_v_1_0_B4.csv
+##### note you might need to modify your code depending how you prepare GSE56046 data
+################################################################
+
+beta <- fread("GSE56046_methylome_normalized.txt")
+dim(beta) 
+
+beta_Mvalues <- grep(pattern = 'Mvalue', x = names(beta), value=TRUE)
+beta2 <- beta[, beta_Mvalues, with=FALSE]
+dim(beta2) 
+names(beta2) <- cov$ID
+beta2 <- as.data.frame(beta2)
+
+beta3 <- beta2[, phenotype_all$id]
+dim(beta3) 
+row.names(beta3) <- beta$ID_REF
+
+#sum(is.na(beta3))   
+
+##### remove X/Y probes - you can keep them as you prefer
+##### if applying to EPIC data, switch to EPIC annotation: MethylationEPIC_v_1_0_B4.csv
+################################################################
+anno <- read.csv("HumanMethylation450_15017482_v1_2.csv",skip=7,stringsAsFactors=FALSE)
+
+cg_exclude <- anno[anno$CHR%in%c("X","Y"),]$Name
+
+beta4 <- beta3[!rownames(beta3)%in%cg_exclude,]
+dim(beta4)  
+
+################################################################
+##### scale all continuous variables
+################################################################
+
+betaP<-beta4
+
+pheno<-cov2
+rownames(pheno) <- pheno$ID
+pheno$site <- as.factor(pheno$site)
+pheno$sampID <- pheno$ID
+
+all(rownames(pheno)==colnames(betaP)) ##Should be all TRUE
+
+dim(betaP)  
+dim(pheno)  
+
+#covariates
+scale_var <- c("age","Bcell","Tcell","NK","Neutro")
+pheno[, scale_var] <-scale(pheno[, scale_var])
+
+is.data.frame(betaP) #TRUE
+is.data.frame(pheno) #TRUE
+
+
+################################################################
+################################################################
+##### Apply DMRcate
+################################################################
+################################################################
+
+betaP_org <- betaP
+pheno_org <- pheno
+
+################################################################
+##### library  
+################################################################
+
+library(minfi)
+library(BiocParallel)
+
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+#change to the code below if applying to EPIC data
+#library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+
+library(DMRcate)
+
+################################################################
+##### Analysis  
+################################################################
+
+#note, this Sys.time() function might vary between clusters
+#time_start <- Sys.time() 
+#paste0("Time start: ", Sys.time())
+
+#create a list to store all results
+DMRcate_results <- list()
+
+for(i in 1:nimput){
+
+print(paste0("Current Loop is: ",i))
+
+################################################################
+##### Data Prep  
+################################################################
+
+##### simulated phenotypes
+################################################################
+
+keeptemp <- c("id", paste0(phenotype_pick,i))
+keeptemp
+phenotemp <- simulated_phenotype[, keeptemp]
+names(phenotemp)<-c("sampID","phenotype")
+
+##### keep select subjects only
+##### merge simulated phenotype 
+################################################################
+ 
+pheno <- merge(pheno_org, phenotemp, by="sampID")
+row.names(pheno)<-pheno$sampID
+#dim(pheno)
+#head(pheno)
+#ncol(pheno)
+
+### DO NOT FORGET THIS!!
+################################################################
+
+pheno<-pheno[order(row.names(pheno)),]
+betaP <- betaP[,order(colnames(betaP))]
+
+#print(all(rownames(pheno)==colnames(betaP))) ##Should be all TRUE
+if(!(all(rownames(pheno)==colnames(betaP)))){break} ##Should be all TRUE
+
+################################################################
+##### Create a GRset using M values
+##### 450K: c(array = "IlluminaHumanMethylation450k", annotation = "ilmn12.hg19") 
+##### EPIC: c(array = "IlluminaHumanMethylationEPIC", annotation = "ilm10b4.hg19")
+################################################################
+betaP<-as.matrix(betaP) #has to be a matrix!
+GRset <- makeGenomicRatioSetFromMatrix(betaP, pData = pheno,
+                                       array = "IlluminaHumanMethylation450k",
+                                       annotation = "ilmn12.hg19",
+                                       mergeManifest = FALSE, what = c("M"))
+print(GRset)
+
+
+################################################################
+##### Create design matrix
+################################################################
+
+#design has intercept => coef=2
+
+modstring<-paste0("~phenotype+age+site+Bcell+Tcell+NK+Neutro")
+design<-model.matrix(as.formula(paste(modstring)), data=pheno)
+
+#print(all(rownames(design)==colnames(betaP))) # Should be TRUE
+if(!(all(rownames(design)==colnames(betaP)))){break} ##Should be all TRUE
+
+################################################################
+##### Apply DMRcate to return DMRs
+################################################################
+
+myannotation <- cpg.annotate("array", GRset, what=NULL, arraytype=NULL,
+                              analysis.type = "differential", design, 
+                              contrasts = FALSE, fdr = 0.05, coef=2)
+print(myannotation)
+
+##### ERROR HANDLING
+##### This is needed because some null simulations output no genome-wide significant DMR
+
+possibleError <- tryCatch(
+ dmrcate(myannotation, lambda=1000, C=2),
+ error=function(e) e)
+
+if(!inherits(possibleError, "error")){
+    #REAL WORK
+    dmrcoutput <- dmrcate(myannotation, lambda=1000, C=2)
+    DMRcate_results_i <- extractRanges(dmrcoutput, genome = "hg19")
+  } else {
+    print("possible error in getting DMRs due to 0 significant CpG sites")
+    print(possibleError)
+    DMRcate_results_i <- NA
+}
+
+
+##Save output
+##########################################################################
+DMRcate_results[i] <- DMRcate_results_i
+
+}
+
+print(paste0("End of Loop: i = ",i))
+
+print(paste0("End of Loop: num of output saved = ",length(DMRcate_results)," out of ", nimput))
+
+outputfile=paste0("DMRcate_",phenotype_pick,"_b",nbatch,"n",nimput,".Rdata")
+outputfile
+
+save(DMRcate_results, file=outputfile)
+
+
+#time_end <- Sys.time()
+#paste0("Time end: ", Sys.time())
+
+#Check running time;
+#time_end-time_start
+
+
+
+
+
+
