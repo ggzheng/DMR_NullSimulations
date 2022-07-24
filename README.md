@@ -1,7 +1,7 @@
 # DMR_NullSimulations
 Here provides R scripts for running genome-wide null simulations using multiple DMR analysis approaches. 
 
-The 450K data example data (GSE56046) was used in the scripts, which is publicly available at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE56046. More details were included in each individual scripts as needed. The scripts can be easily adapted to EPIC array data. The instructions of adaption were also inserted as comments as needed in individual scripts.
+The 450K data example data (GSE56046) was used in the scripts, which is publicly available at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE56046. More details were included in each individual scripts as needed. The scripts can be easily adapted to EPIC array data. The instructions of adaption were also inserted as comments as needed in individual scripts. All scripts are friendly for batch submission. 
 
 For annotation data, you can download it at the Illumnina website.
 
